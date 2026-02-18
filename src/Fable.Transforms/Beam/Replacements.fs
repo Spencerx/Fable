@@ -281,6 +281,7 @@ let private operators
             | Number(UInt32, _) -> "range", "range_u_int32", addStep args
             | Number(Int64, _) -> "range", "range_int64", addStep args
             | Number(UInt64, _) -> "range", "range_u_int64", addStep args
+            | Number(BigInt, _) -> "range", "range_big_int", addStep args
             | _ -> "range", "range_double", addStep args
 
         Helper.LibCall(com, modul, meth, _t, args, info.SignatureArgTypes, ?loc = r)
@@ -344,6 +345,8 @@ let private operators
     | "op_Append", [ left; right ] -> emitExpr r _t [ left; right ] "($0 ++ $1)" |> Some
     // TypeOf: typeof<T> → TypeInfo
     | "TypeOf", _ -> (genArg com ctx r 0 info.GenericArgs) |> makeTypeInfo r |> Some
+    // TypeDefOf: typedefof<T> → TypeInfo with generics replaced by obj
+    | "TypeDefOf", _ -> (genArg com ctx r 0 info.GenericArgs) |> makeTypeDefinitionInfo r |> Some
     // Reraise
     | "Reraise", _ ->
         match ctx.CaughtException with
@@ -1023,11 +1026,21 @@ let private strings
     | "GetEnumerator", Some c, _ -> emitExpr r t [ c ] "fable_utils:get_enumerator(binary_to_list($0))" |> Some
     // String.Format("{0} {1}", arg0, arg1)
     | "Format", None, (fmtStr :: fmtArgs) ->
+        // When a single array argument is passed (e.g. from ParamArray),
+        // pass it directly — format/2 already handles refs and lists.
         let argsList =
-            List.foldBack
-                (fun arg acc -> Value(NewList(Some(arg, acc), Any), None))
-                fmtArgs
-                (Value(NewList(None, Any), None))
+            match fmtArgs with
+            | [ singleArg ] when
+                (match singleArg.Type with
+                 | Array _ -> true
+                 | _ -> false)
+                ->
+                singleArg
+            | _ ->
+                List.foldBack
+                    (fun arg acc -> Value(NewList(Some(arg, acc), Any), None))
+                    fmtArgs
+                    (Value(NewList(None, Any), None))
 
         Helper.LibCall(com, "fable_string", "format", t, [ fmtStr; argsList ], ?loc = r)
         |> Some
@@ -1440,7 +1453,7 @@ let private listModule
     | "Replicate", [ count; value ] -> Helper.LibCall(com, "fable_list", "replicate", t, [ count; value ]) |> Some
     | "Item", [ idx; list ] -> emitExpr r t [ idx; list ] "lists:nth($0 + 1, $1)" |> Some
     | "Skip", [ count; list ] -> emitExpr r t [ count; list ] "lists:nthtail($0, $1)" |> Some
-    | "Take", [ count; list ] -> emitExpr r t [ count; list ] "lists:sublist($1, $0)" |> Some
+    | "Take", [ count; list ] -> Helper.LibCall(com, "fable_list", "take", t, [ count; list ], ?loc = r) |> Some
     | "SkipWhile", [ fn; list ] -> emitExpr r t [ fn; list ] "lists:dropwhile($0, $1)" |> Some
     | "TakeWhile", [ fn; list ] -> emitExpr r t [ fn; list ] "lists:takewhile($0, $1)" |> Some
     | "Truncate", [ count; list ] -> emitExpr r t [ count; list ] "lists:sublist($1, $0)" |> Some
@@ -1819,6 +1832,9 @@ let rec private unwrapSeqArg r (expr: Expr) =
         | Array _ -> emitExpr r (List Any) [ expr ] "erlang:get($0)" // deref array ref
         | String -> emitExpr r (List Any) [ expr ] "binary_to_list($0)"
         // For generic seq/list types, use runtime check — value might be array ref at runtime
+        // Dictionary ref: convert to list of {Key, Value} tuples for Seq iteration
+        | DeclaredType(entRef, _) when entRef.FullName = Types.dictionary ->
+            emitExpr r (List Any) [ expr ] "maps:to_list(erlang:get($0))"
         | DeclaredType(entRef, _) when
             entRef.FullName = Types.ienumerableGeneric
             || entRef.FullName = Types.ienumerable
@@ -1869,6 +1885,17 @@ let private seqModule
     | meth, _ ->
         let meth = Naming.lowerFirst meth
         let args = injectArg com ctx r "Seq" meth info.GenericArgs args
+        // Unwrap Dictionary args so seq operations get {K,V} tuple lists
+        let rec unwrapDictArg (expr: Expr) =
+            match expr with
+            | TypeCast(innerExpr, _) -> unwrapDictArg innerExpr
+            | _ ->
+                match expr.Type with
+                | DeclaredType(entRef, _) when entRef.FullName = Types.dictionary ->
+                    emitExpr r (List Any) [ expr ] "maps:to_list(erlang:get($0))"
+                | _ -> expr
+
+        let args = args |> List.map unwrapDictArg
 
         Helper.LibCall(com, "seq", meth, t, args, info.SignatureArgTypes, ?thisArg = thisArg, ?loc = r)
         |> Some
@@ -2241,7 +2268,10 @@ let private arrayModule
         emitExpr r t [ fn; arr ] "lists:dropwhile($0, $1)" |> wrapArr com r t |> Some
     | "Take", [ count; arr ] ->
         let arr = derefArr r arr
-        emitExpr r t [ arr; count ] "lists:sublist($0, $1)" |> wrapArr com r t |> Some
+
+        Helper.LibCall(com, "fable_list", "take", t, [ count; arr ], ?loc = r)
+        |> wrapArr com r t
+        |> Some
     | "TakeWhile", [ fn; arr ] ->
         let arr = derefArr r arr
         emitExpr r t [ fn; arr ] "lists:takewhile($0, $1)" |> wrapArr com r t |> Some
@@ -3493,6 +3523,10 @@ let private collections
             Helper.LibCall(com, "fable_dictionary", "contains_key", t, [ callee; key ], ?loc = r)
             |> Some
         | _ -> None
+    | "GetEnumerator", Some callee when isKeyOrValueCollection ->
+        // KeyCollection/ValueCollection are plain lists, use generic enumerator
+        Helper.LibCall(com, "fable_utils", "get_enumerator", t, [ callee ], ?loc = r)
+        |> Some
     | "GetEnumerator", Some callee ->
         Helper.LibCall(com, "fable_dictionary", "get_enumerator", t, [ callee ], ?loc = r)
         |> Some
@@ -4773,7 +4807,8 @@ let tryCall
         | _ -> None
     // Built-in .NET exception types — all become #{message => Msg} maps in Erlang
     | BuiltinSystemException _
-    | "System.Collections.Generic.KeyNotFoundException" ->
+    | "System.Collections.Generic.KeyNotFoundException"
+    | "System.OperationCanceledException" ->
         match info.CompiledName, thisArg, args with
         | ".ctor", None, [ msg ] -> emitExpr r t [ msg ] "#{message => $0}" |> Some
         | ".ctor", None, [] ->
@@ -4787,10 +4822,21 @@ let tryCall
         match info.CompiledName, thisArg with
         | "get_FullName", Some c -> Helper.LibCall(com, "fable_reflection", "full_name", t, [ c ], ?loc = r) |> Some
         | "get_Namespace", Some c -> Helper.LibCall(com, "fable_reflection", "namespace", t, [ c ], ?loc = r) |> Some
+        | "get_Name", Some c -> Helper.LibCall(com, "fable_reflection", "name", t, [ c ], ?loc = r) |> Some
         | "get_IsGenericType", Some c ->
             Helper.LibCall(com, "fable_reflection", "is_generic_type", t, [ c ], ?loc = r)
             |> Some
         | "get_IsArray", Some c -> Helper.LibCall(com, "fable_reflection", "is_array", t, [ c ], ?loc = r) |> Some
+        | "GetGenericTypeDefinition", Some c ->
+            Helper.LibCall(com, "fable_reflection", "get_generic_type_definition", t, [ c ], ?loc = r)
+            |> Some
+        | "GetElementType", Some c ->
+            Helper.LibCall(com, "fable_reflection", "get_element_type", t, [ c ], ?loc = r)
+            |> Some
+        | "get_GenericTypeArguments", Some c ->
+            Helper.LibCall(com, "fable_reflection", "get_generics", t, [ c ], ?loc = r)
+            |> wrapArr com r t
+            |> Some
         | _ -> None
     // System.Enum
     | "System.Enum" ->
@@ -4821,21 +4867,114 @@ let tryCall
     | Naming.StartsWith "Microsoft.FSharp.Core.FSharpFunc" _
     | Naming.StartsWith "Microsoft.FSharp.Core.OptimizedClosures.FSharpFunc" _ ->
         match info.CompiledName, thisArg with
-        | "Invoke", Some callee -> CurriedApply(callee, args, t, r) |> Some
+        | "Invoke", Some callee ->
+            // Delegates are uncurried in Erlang — apply all args at once, not curried.
+            match args with
+            | [] ->
+                // Zero-arg Invoke (e.g. Func<int>.Invoke(), Action.Invoke()).
+                // The underlying fun may be arity 0 (unit stripped at definition) or arity 1
+                // (unit kept in Delegate AST node). Erlang enforces arity, so check at runtime.
+                emitExpr
+                    r
+                    t
+                    [ callee ]
+                    "case erlang:fun_info($0, arity) of {arity, 0} -> ($0)(); {arity, _} -> ($0)(ok) end"
+                |> Some
+            | _ ->
+                let placeholders =
+                    args |> List.mapi (fun i _ -> $"$%d{i + 1}") |> String.concat ", "
+
+                emitExpr r t (callee :: args) $"($0)(%s{placeholders})" |> Some
         | _ -> None
-    // F# Reflection — minimal support
+    // F# Reflection
     | "Microsoft.FSharp.Reflection.FSharpType" ->
         match info.CompiledName, args with
         | "MakeTupleType", [ typesArr ] ->
-            // Return a type info map for a tuple
-            Helper.LibCall(com, "fable_reflection", "make_tuple_type", t, [ typesArr ], ?loc = r)
+            let derefed = derefArr r typesArr
+
+            Helper.LibCall(com, "fable_reflection", "make_tuple_type", t, [ derefed ], ?loc = r)
+            |> Some
+        | "GetRecordFields", _ ->
+            Helper.LibCall(com, "fable_reflection", "get_record_elements", t, args, ?loc = r)
+            |> wrapArr com r t
+            |> Some
+        | "GetUnionCases", _ ->
+            Helper.LibCall(com, "fable_reflection", "get_union_cases", t, args, ?loc = r)
+            |> wrapArr com r t
+            |> Some
+        | "GetTupleElements", _ ->
+            Helper.LibCall(com, "fable_reflection", "get_tuple_elements", t, args, ?loc = r)
+            |> wrapArr com r t
+            |> Some
+        | "GetFunctionElements", _ ->
+            Helper.LibCall(com, "fable_reflection", "get_function_elements", t, args, ?loc = r)
+            |> Some
+        | "IsRecord", _ -> Helper.LibCall(com, "fable_reflection", "is_record", t, args, ?loc = r) |> Some
+        | "IsUnion", _ -> Helper.LibCall(com, "fable_reflection", "is_union", t, args, ?loc = r) |> Some
+        | "IsTuple", _ ->
+            Helper.LibCall(com, "fable_reflection", "is_tuple_type", t, args, ?loc = r)
+            |> Some
+        | "IsFunction", _ ->
+            Helper.LibCall(com, "fable_reflection", "is_function_type", t, args, ?loc = r)
             |> Some
         | _ -> None
     | "Microsoft.FSharp.Reflection.FSharpValue" ->
         match info.CompiledName, args with
         | "MakeTuple", [ values; _ ] ->
-            // MakeTuple(values, tupleType) — just return values as a tuple (list in Erlang)
-            emitExpr r t [ values ] "list_to_tuple($0)" |> Some
+            // MakeTuple(values, tupleType) — values is an array ref, convert to Erlang tuple
+            emitExpr r t [ values ] "list_to_tuple(erlang:get($0))" |> Some
+        | "GetTupleFields", [ tuple ] ->
+            Helper.LibCall(com, "fable_reflection", "get_tuple_fields_value", t, [ tuple ], ?loc = r)
+            |> wrapArr com r t
+            |> Some
+        | "GetTupleField", [ tuple; index ] ->
+            Helper.LibCall(com, "fable_reflection", "get_tuple_field_value", t, [ tuple; index ], ?loc = r)
+            |> Some
+        | "GetRecordFields", [ record ] ->
+            // Inject type info at compile time since Erlang maps don't preserve order
+            // Look through TypeCast to get the concrete type (since GetRecordFields takes obj)
+            let rec getConcreteType (expr: Expr) =
+                match expr with
+                | TypeCast(inner, _) -> getConcreteType inner
+                | _ -> expr.Type
+
+            let concreteType = getConcreteType record
+            let typeInfo = Value(TypeInfo(concreteType, []), None)
+
+            Helper.LibCall(com, "fable_reflection", "get_record_fields_value", t, [ record; typeInfo ], ?loc = r)
+            |> wrapArr com r t
+            |> Some
+        | "GetRecordField", [ record; propInfo ] ->
+            Helper.LibCall(com, "fable_reflection", "get_record_field_value", t, [ record; propInfo ], ?loc = r)
+            |> Some
+        | "MakeRecord", [ typ; values ] ->
+            Helper.LibCall(com, "fable_reflection", "make_record_from_values", t, [ typ; values ], ?loc = r)
+            |> Some
+        | "GetUnionFields", [ union; typ ] ->
+            Helper.LibCall(com, "fable_reflection", "get_union_fields_value", t, [ union; typ ], ?loc = r)
+            |> Some
+        | "MakeUnion", [ caseInfo; values ] ->
+            Helper.LibCall(com, "fable_reflection", "make_union_value", t, [ caseInfo; values ], ?loc = r)
+            |> Some
+        | _ -> None
+    // PropertyInfo and UnionCaseInfo
+    | "Microsoft.FSharp.Reflection.UnionCaseInfo"
+    | "System.Reflection.PropertyInfo"
+    | "System.Reflection.MemberInfo" ->
+        match thisArg, info.CompiledName with
+        | Some c, "get_Tag" -> emitExpr r t [ c ] "maps:get(tag, $0)" |> Some
+        | Some c, ("get_PropertyType" | "get_ParameterType") -> emitExpr r t [ c ] "maps:get(property_type, $0)" |> Some
+        | Some c, "GetFields" ->
+            Helper.LibCall(com, "fable_reflection", "get_union_case_fields", t, [ c ], ?loc = r)
+            |> wrapArr com r t
+            |> Some
+        | Some c, "GetValue" ->
+            Helper.LibCall(com, "fable_reflection", "get_value", t, c :: args, ?loc = r)
+            |> Some
+        | Some c, "get_Name" ->
+            match c.Type with
+            | MetaType -> Helper.LibCall(com, "fable_reflection", "name", t, [ c ], ?loc = r) |> Some
+            | _ -> emitExpr r t [ c ] "maps:get(name, $0)" |> Some
         | _ -> None
     | "System.Text.StringBuilder" -> bclType com ctx r t info thisArg args
     | _ -> None

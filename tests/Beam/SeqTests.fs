@@ -598,19 +598,17 @@ let ``test Seq.foldBack2 works`` () =
     Seq.foldBack2 (fun x y acc -> x + y - acc) [1; 2; 3; 4] [1; 2; 3; 4] 0
     |> equal -4
 
-// TODO: Seq.forall laziness test fails because Beam sequences are eager lists;
-// Seq.map evaluates all elements before Seq.forall checks them
-// [<Fact>]
-// let ``test Seq.forall is lazy`` () =
-//     let mutable x = ""
-//     let one() = x <- "one"; false
-//     let two() = x <- "two"; true
-//     let ok =
-//         [one; two]
-//         |> Seq.map (fun c -> c())
-//         |> Seq.forall id
-//     ok |> equal false
-//     x |> equal "one"
+[<Fact>]
+let ``test Seq.forall is lazy`` () =
+    let mutable x = ""
+    let one() = x <- "one"; false
+    let two() = x <- "two"; true
+    let ok =
+        [one; two]
+        |> Seq.map (fun c -> c())
+        |> Seq.forall id
+    ok |> equal false
+    x |> equal "one"
 
 [<Fact>]
 let ``test Seq.fold with tupled arguments works`` () =
@@ -737,13 +735,13 @@ let ``test Seq.head with option works`` () =
     let xs = [None; Some 1.]
     Seq.head xs |> equal None
 
-// TODO: nested Option .Value.Value accessor doesn't unwrap correctly on Beam
-// [<Fact>]
-// let ``test Seq.tryHead with option works`` () =
-//     let xs = [Some 1.; None]
-//     Seq.tryHead xs |> equal (Some(Some 1.))
-//     let xs = [None; Some 1.]
-//     Seq.tryHead xs |> equal (Some(None))
+[<Fact>]
+let ``test Seq.tryHead with option works`` () =
+    let xs = [Some 1.; None]
+    Seq.tryHead xs |> equal (Some(Some 1.))
+    Seq.tryHead xs |> (fun v -> v.Value.Value) |> equal 1.
+    let xs = [None; Some 1.]
+    Seq.tryHead xs |> equal (Some(None))
 
 [<Fact>]
 let ``test seq empty works`` () =
@@ -764,13 +762,12 @@ let ``test Seq.iteri with index works`` () =
     xs |> Seq.iteri (fun i x -> total <- total + (float i) * x)
     total |> equal 20.
 
-// TODO: Seq.initInfinite not supported in Beam
-// [<Fact>]
-// let ``test Seq.initInfinite works`` () =
-//     Seq.initInfinite (fun i -> 2. * float i)
-//     |> Seq.take 10
-//     |> Seq.sum
-//     |> equal 90.
+[<Fact>]
+let ``test Seq.initInfinite works`` () =
+    Seq.initInfinite (fun i -> 2. * float i)
+    |> Seq.take 10
+    |> Seq.sum
+    |> equal 90.
 
 [<Fact>]
 let ``test Seq.collect works II`` () =
@@ -971,16 +968,15 @@ let ``test Seq iterators from range do rewind`` () =
     xs2 |> Seq.map string |> String.concat "," |> equal "1,2,3,4,5"
     xs2 |> Seq.map string |> String.concat "," |> equal "1,2,3,4,5"
 
-// TODO: Beam's Seq.take uses lists:sublist which doesn't throw when there are not enough elements
-// [<Fact>]
-// let ``test Seq.take throws when not enough elements`` () =
-//     let xs = [1.; 2.; 3.; 4.; 5.]
-//     xs |> Seq.take 2
-//     |> Seq.last
-//     |> equal 2.
-//     // Seq.take should throw an exception if there're not enough elements
-//     try xs |> Seq.take 20 |> Seq.length with _ -> -1
-//     |> equal -1
+[<Fact>]
+let ``test Seq.take throws when not enough elements`` () =
+    let xs = [1.; 2.; 3.; 4.; 5.]
+    xs |> Seq.take 2
+    |> Seq.last
+    |> equal 2.
+    // Seq.take should throw an exception if there're not enough elements
+    try xs |> Seq.take 20 |> Seq.length with _ -> -1
+    |> equal -1
 
 [<Fact>]
 let ``test Seq.truncate works without throwing`` () =
@@ -1016,12 +1012,11 @@ let ``test Seq.range step works with decimal`` () =
     |> Seq.reduce (+)
     |> equal -2843.0340746886M
 
-// TODO: Bigint range without explicit step causes badarith (default step computation issue)
-// [<Fact>]
-// let ``test Seq.range works with bigint`` () =
-//     seq{1I..2000I}
-//     |> Seq.reduce (+)
-//     |> equal 2001000I
+[<Fact>]
+let ``test Seq.range works with bigint`` () =
+    seq{1I..2000I}
+    |> Seq.reduce (+)
+    |> equal 2001000I
 
 [<Fact>]
 let ``test Seq.range step works with bigint`` () =

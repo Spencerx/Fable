@@ -13,12 +13,33 @@ let private strLit s =
 let private atomLit s =
     Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom s))
 
+/// Create an integer literal Erlang expression
+let private intLit i =
+    Beam.ErlExpr.Literal(Beam.ErlLiteral.Integer(int64 i))
+
 /// Build a type info map: #{fullname => <<"...">>, generics => [...]}
 let private makeTypeInfoMap (fullname: string) (generics: Beam.ErlExpr list) =
     Beam.ErlExpr.Map
         [
             atomLit "fullname", strLit fullname
             atomLit "generics", Beam.ErlExpr.List generics
+        ]
+
+/// Build a PropertyInfo map: #{name => <<"field_name">>, property_type => TypeInfo}
+let private makePropertyInfo (fieldName: string) (typeInfo: Beam.ErlExpr) =
+    let erlName = Fable.Beam.Naming.sanitizeErlangName fieldName
+    Beam.ErlExpr.Map [ atomLit "name", strLit erlName; atomLit "property_type", typeInfo ]
+
+/// Build a CaseInfo map: #{tag => N, name => <<"CaseName">>, erl_tag => case_name, fields => [...]}
+let private makeCaseInfo (tag: int) (caseName: string) (fields: Beam.ErlExpr list) =
+    let erlTag = Fable.Beam.Naming.sanitizeErlangName caseName
+
+    Beam.ErlExpr.Map
+        [
+            atomLit "tag", intLit tag
+            atomLit "name", strLit caseName
+            atomLit "erl_tag", atomLit erlTag
+            atomLit "fields", Beam.ErlExpr.List fields
         ]
 
 /// Get the full name for a number kind
@@ -101,4 +122,40 @@ let rec transformTypeInfo
     | Fable.AnonymousRecordType _ -> makeTypeInfoMap "" []
     | Fable.DeclaredType(entRef, generics) ->
         let resolved = resolveGenerics generics
-        makeTypeInfoMap entRef.FullName resolved
+
+        match com.TryGetEntity(entRef) with
+        | Some ent when ent.IsFSharpRecord ->
+            let fields =
+                ent.FSharpFields
+                |> List.map (fun fi ->
+                    let typeInfo = transformTypeInfo com r genMap fi.FieldType
+                    makePropertyInfo fi.Name typeInfo
+                )
+
+            Beam.ErlExpr.Map
+                [
+                    atomLit "fullname", strLit entRef.FullName
+                    atomLit "generics", Beam.ErlExpr.List resolved
+                    atomLit "fields", Beam.ErlExpr.List fields
+                ]
+        | Some ent when ent.IsFSharpUnion ->
+            let cases =
+                ent.UnionCases
+                |> List.mapi (fun i uci ->
+                    let caseFields =
+                        uci.UnionCaseFields
+                        |> List.map (fun fi ->
+                            let typeInfo = transformTypeInfo com r genMap fi.FieldType
+                            makePropertyInfo fi.Name typeInfo
+                        )
+
+                    makeCaseInfo i uci.Name caseFields
+                )
+
+            Beam.ErlExpr.Map
+                [
+                    atomLit "fullname", strLit entRef.FullName
+                    atomLit "generics", Beam.ErlExpr.List resolved
+                    atomLit "cases", Beam.ErlExpr.List cases
+                ]
+        | _ -> makeTypeInfoMap entRef.FullName resolved

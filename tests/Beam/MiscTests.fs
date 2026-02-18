@@ -3,7 +3,9 @@ module Fable.Tests.Misc
 #nowarn "40"
 
 open System
+open FSharp.UMX
 open Util.Testing
+open Util2.Extensions
 
 // ============= Helper Types =============
 
@@ -73,6 +75,18 @@ let f2 x = x + x
 let f3 () = 5
 
 type MyDelegate = Func<int>
+
+// UMX types
+[<Measure>] type customerId
+[<Measure>] type orderId
+[<Measure>] type kg
+
+type Order =
+    {
+        id : string<orderId>
+        customer : string<customerId>
+        quantity : int<kg>
+    }
 
 // Disposable types
 type DisposableFoo() =
@@ -376,51 +390,47 @@ let ``test Inlined arguments with delayed resolution are only evaluated once`` (
 
 // -- Delegates --
 
-// TODO: Delegate unit arg mismatch — Lambda keeps unit param but .Invoke() strips it via dropUnitCallArg
-// [<Fact>]
-// let ``test Passing delegate works`` () =
-//     dtest1 dInvoke |> equal 42
-//     dtest2 dInvoke |> equal 43
+[<Fact>]
+let ``test Passing delegate works`` () =
+    dtest1 dInvoke |> equal 42
+    dtest2 dInvoke |> equal 43
 
-// TODO: Delegate unit arg mismatch — Func<int>(fn) where fn: unit->int generates arity-1 fun but Invoke() calls with 0 args
-// [<Fact>]
-// let ``test Conversion to delegate works`` () =
-//     (System.Func<_,_,_,_> f1).Invoke(1,2,3) |> equal 6
-//     let f = f1
-//     (System.Func<_,_,_,_> f).Invoke(1,2,3) |> equal 6
-//     let del = System.Func<_,_,_,_>(fun x y z -> x + y + z)
-//     del.Invoke(1,2,3) |> equal 6
-//     (System.Func<_,_> f2).Invoke(2) |> equal 4
-//     let func1 : Func<int> = Func<int>(fun () -> 8)
-//     func1.Invoke() |> equal 8
-//     let fn2 () = 9
-//     let func2 : Func<int> = Func<int>(fn2)
-//     func2.Invoke() |> equal 9
-//     let func2b = Func<unit, int>(fn2)
-//     func2b.Invoke() |> equal 9
-//     let fn2c () () = 9
-//     let func2c : Func<int> = Func<int>(fn2c())
-//     func2c.Invoke() |> equal 9
-//     let fn3 i = i + 4
-//     let func3 = Func<int, int>(fn3)
-//     func3.Invoke(7) |> equal 11
-//     let fn4 x y = x * y - 3
-//     let func4 = Func<int, int, int>(fn4)
-//     func4.Invoke(4, 6) |> equal 21
+[<Fact>]
+let ``test Conversion to delegate works`` () =
+    (System.Func<_,_,_,_> f1).Invoke(1,2,3) |> equal 6
+    let f = f1
+    (System.Func<_,_,_,_> f).Invoke(1,2,3) |> equal 6
+    let del = System.Func<_,_,_,_>(fun x y z -> x + y + z)
+    del.Invoke(1,2,3) |> equal 6
+    (System.Func<_,_> f2).Invoke(2) |> equal 4
+    let func1 : Func<int> = Func<int>(fun () -> 8)
+    func1.Invoke() |> equal 8
+    let fn2 () = 9
+    let func2 : Func<int> = Func<int>(fn2)
+    func2.Invoke() |> equal 9
+    let func2b = Func<unit, int>(fn2)
+    func2b.Invoke() |> equal 9
+    let fn2c () () = 9
+    let func2c : Func<int> = Func<int>(fn2c())
+    func2c.Invoke() |> equal 9
+    let fn3 i = i + 4
+    let func3 = Func<int, int>(fn3)
+    func3.Invoke(7) |> equal 11
+    let fn4 x y = x * y - 3
+    let func4 = Func<int, int, int>(fn4)
+    func4.Invoke(4, 6) |> equal 21
 
-// TODO: Delegate unit arg mismatch — Func<int>(f3) where f3: unit->int
-// [<Fact>]
-// let ``test Conversion to Func works`` () =
-//     (System.Func<_> f3).Invoke() |> equal 5
-//     let f = Func<_>(fun () -> 6)
-//     f.Invoke() |> equal 6
+[<Fact>]
+let ``test Conversion to Func works`` () =
+    (System.Func<_> f3).Invoke() |> equal 5
+    let f = Func<_>(fun () -> 6)
+    f.Invoke() |> equal 6
 
-// TODO: Delegate unit arg mismatch — MyDelegate(f3) where f3: unit->int
-// [<Fact>]
-// let ``test Conversion to aliased Func works`` () =
-//     (MyDelegate f3).Invoke() |> equal 5
-//     let f = MyDelegate(fun () -> 6)
-//     f.Invoke() |> equal 6
+[<Fact>]
+let ``test Conversion to aliased Func works`` () =
+    (MyDelegate f3).Invoke() |> equal 5
+    let f = MyDelegate(fun () -> 6)
+    f.Invoke() |> equal 6
 
 [<Fact>]
 let ``test Conversion to Action works`` () =
@@ -1044,3 +1054,68 @@ let ``test Constructor param and interface method with same name don't collide``
     v.Normal |> equal 3.0
     let i = v :> IHasNormal
     i.Normal() |> equal 3.0
+
+// --- FSharp.UMX ---
+
+[<Fact>]
+let ``test FSharp.UMX works`` () =
+    let lookupById (orders : Order list) (id : string<orderId>) =
+        orders |> List.tryFind (fun o -> o.id = id)
+
+    let order =
+        {
+            id = % "orderId"
+            customer = % "customerId"
+            quantity = % 42
+        }
+
+    // lookupById [] order.customer // compiler error
+    let orders = [{ order with quantity = %50 }]
+    lookupById orders order.id
+    |> Option.map (fun o -> UMX.untag o.quantity)
+    |> equal (Some 50)
+
+[<Fact>]
+let ``test FSharp.UMX: reflection info`` () =
+    let fields = Reflection.FSharpType.GetRecordFields typeof<Order>
+    fields.Length |> equal 3
+
+// --- Util2 / Util3 tests ---
+
+[<Fact>]
+let ``test Type abbreviation in namespace compiles`` () = // See #140
+    let h = Util2.H(5)
+    equal "5" h.Value
+
+[<Fact>]
+let ``test Multiple namespaces in same file work`` () = // See #1218
+    A.C.Helper.Add5(9) |> equal 14
+
+[<Fact>]
+let ``test Inline extension methods in other files can be found`` () = // See #1667
+    "HOLA CARACOLA".StartsWith("hola") |> equal false
+    "HOLA CARACOLA".StartsWithIgnoreCase("hola") |> equal true
+
+[<Fact>]
+let ``test Calls to core lib from a subfolder work`` () =
+    Util2.Helper.Format("{0} + {0} = {1}", 2, 4)
+    |> equal "2 + 2 = 4"
+
+[<Fact>]
+let ``test Assignment block as expression is optimized`` () =
+    let foo x y = x - y
+    let mutable x = 15
+    let res = A.C.Helper.Add5(let mutable x = 2 in let mutable y = 3 in x + y)
+    let test () =
+        A.C.Helper.Add5(let mutable x = 4 in let mutable y = 3 in x + y)
+        |> equal 12
+    test()
+    equal 10 res
+    foo x 5 |> equal 10
+
+[<Fact>]
+let ``test Optimized assignment blocks inside try ... with work`` () =
+    let res =
+        try A.C.Helper.Add5(let mutable x = 2 in let mutable y = 3 in x + y)
+        with _ -> 1
+    equal 10 res

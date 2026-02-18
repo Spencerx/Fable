@@ -187,17 +187,15 @@ let ``test Dictionary.Keys.Count works`` () =
     dic.Add("B", 2)
     dic.Keys.Count |> equal 2
 
-// TODO: for-in on dic.Values list — GetEnumerator on ValueCollection goes through collections handler
-// which routes to fable_dictionary:get_enumerator (expects dict ref, not list)
-// [<Fact>]
-// let ``test Dictionary.Values works`` () =
-//     let dic = Dictionary<_, _>()
-//     dic.Add("A", 1)
-//     dic.Add("B", 2)
-//     let mutable i = 0
-//     for value in dic.Values do
-//         i <- value + i
-//     i |> equal 3
+[<Fact>]
+let ``test Dictionary.Values works`` () =
+    let dic = Dictionary<_, _>()
+    dic.Add("A", 1)
+    dic.Add("B", 2)
+    let mutable i = 0
+    for value in dic.Values do
+        i <- value + i
+    i |> equal 3
 
 [<Fact>]
 let ``test Dictionary.Values.Count works`` () =
@@ -244,15 +242,14 @@ let ``test Dictionary iteration works`` () =
         total <- kv.Value + total
     total + dic.[1.] |> equal 386.
 
-// TODO: Seq.fold on Dictionary — item.Value on KeyValuePair tuples causes badarg
-// [<Fact>]
-// let ``test Dictionary folding works`` () =
-//     let dic = Dictionary<_, _>()
-//     for i in 1. .. 10. do
-//         dic.Add(i, i * i)
-//     dic
-//     |> Seq.fold (fun acc item -> acc + item.Value) 0.
-//     |> equal 385.
+[<Fact>]
+let ``test Dictionary folding works`` () =
+    let dic = Dictionary<_, _>()
+    for i in 1. .. 10. do
+        dic.Add(i, i * i)
+    dic
+    |> Seq.fold (fun acc item -> acc + item.Value) 0.
+    |> equal 385.
 
 [<Fact>]
 let ``test Dictionary.Delete works`` () =
