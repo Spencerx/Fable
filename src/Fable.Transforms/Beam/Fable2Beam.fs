@@ -1129,7 +1129,7 @@ and transformValue (com: IBeamCompiler) (ctx: Context) (value: ValueKind) : Beam
             let fieldEntries =
                 List.zip (entity.FSharpFields |> List.map (fun f -> f.Name)) values
                 |> List.map (fun (name, value) ->
-                    Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom(toSnakeCase name))),
+                    Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom(sanitizeFieldName name))),
                     transformExpr com ctx value
                 )
 
@@ -1138,7 +1138,8 @@ and transformValue (com: IBeamCompiler) (ctx: Context) (value: ValueKind) : Beam
                 let typeName = sanitizeErlangName entity.DisplayName
 
                 let hasMessageField =
-                    entity.FSharpFields |> List.exists (fun f -> toSnakeCase f.Name = "message")
+                    entity.FSharpFields
+                    |> List.exists (fun f -> sanitizeFieldName f.Name = "message")
 
                 let messageEntry =
                     if hasMessageField then
@@ -1170,7 +1171,8 @@ and transformValue (com: IBeamCompiler) (ctx: Context) (value: ValueKind) : Beam
             Array.zip fieldNames (values |> List.toArray)
             |> Array.toList
             |> List.map (fun (name, value) ->
-                Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom(toSnakeCase name))), transformExpr com ctx value
+                Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom(sanitizeFieldName name))),
+                transformExpr com ctx value
             )
 
         Beam.ErlExpr.Map entries
