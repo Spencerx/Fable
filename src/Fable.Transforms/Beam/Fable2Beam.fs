@@ -370,16 +370,22 @@ let rec transformExpr (com: IBeamCompiler) (ctx: Context) (expr: Expr) : Beam.Er
             let erlExpr = transformExpr com ctx expr
             Beam.ErlExpr.Call(None, "put", [ erlExpr; transformExpr com ctx value ])
         | IdentExpr ident -> Beam.ErlExpr.Match(Beam.PVar(capitalizeFirst ident.Name), transformExpr com ctx value)
-        | _ -> Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "todo_set"))
+        | _ ->
+            com.WarnOnlyOnce("Set with non-identifier target is not supported for Beam target")
+
+            Beam.ErlExpr.Call(
+                Some "erlang",
+                "error",
+                [ Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "unsupported_set")) ]
+            )
 
     | Set(expr, FieldSet fieldName, _, value, _) ->
         let erlExpr = transformExpr com ctx expr
         let erlValue = transformExpr com ctx value
 
-        let sanitizedFieldName = sanitizeErlangName fieldName
-
         match expr.Type with
         | Fable.AST.Fable.Type.DeclaredType(entityRef, _) when isClassType com entityRef ->
+            let sanitizedFieldName = sanitizeErlangName fieldName
             // Use f$ prefix to avoid collision with interface method keys
             let atomField =
                 Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom("field_" + sanitizedFieldName)))
@@ -398,7 +404,9 @@ let rec transformExpr (com: IBeamCompiler) (ctx: Context) (expr: Expr) : Beam.Er
                 ]
             )
         | _ ->
-            // Record: existing behavior (maps:put returning new map), no prefix
+            // Record: use sanitizeFieldName for disambiguation of camelCase/PascalCase
+            let sanitizedFieldName = sanitizeFieldName fieldName
+
             let atomField =
                 Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom sanitizedFieldName))
 
@@ -921,7 +929,9 @@ let rec transformExpr (com: IBeamCompiler) (ctx: Context) (expr: Expr) : Beam.Er
                 [ Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "rethrow")) ]
             )
         | Curry(e, arity) -> transformExpr com ctx (Replacements.Api.curryExprAtRuntime com arity e)
-        | Debugger -> Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "todo_debugger"))
+        | Debugger ->
+            com.WarnOnlyOnce("System.Diagnostics.Debugger is not supported for Beam target, ignoring")
+            Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "ok"))
 
     | Import(importInfo, typ, _range) ->
         // Standalone import (function reference from another module, not a direct call).
@@ -1262,7 +1272,13 @@ and transformValue (com: IBeamCompiler) (ctx: Context) (value: ValueKind) : Beam
             $"Unhandled Fable value kind '%s{kindName}' — emitting placeholder atom. This may cause runtime errors."
         )
 
-        Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom $"todo_%s{kindName.ToLowerInvariant()}"))
+        Beam.ErlExpr.Call(
+            Some "erlang",
+            "error",
+            [
+                Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom $"unsupported_%s{kindName.ToLowerInvariant()}"))
+            ]
+        )
 
 and transformOperation
     (com: IBeamCompiler)
@@ -1493,11 +1509,10 @@ and transformGet (com: IBeamCompiler) (ctx: Context) (kind: GetKind) (typ: Type)
         else
             erlExpr
     | FieldGet info ->
-        let fieldName = sanitizeErlangName info.Name
-        let fieldAtom = Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom fieldName))
-
         match expr.Type with
         | Fable.AST.Fable.Type.DeclaredType(entityRef, _) when isClassType com entityRef ->
+            let fieldName = sanitizeErlangName info.Name
+
             // During constructor, field values may reference other fields via this.FieldName.
             // Since put(Ref, #{...}) hasn't happened yet, we use the precomputed Erlang expressions.
             let isThisRef =
@@ -1515,12 +1530,16 @@ and transformGet (com: IBeamCompiler) (ctx: Context) (kind: GetKind) (typ: Type)
 
                 Beam.ErlExpr.Call(Some "maps", "get", [ classFieldAtom; Beam.ErlExpr.Call(None, "get", [ erlExpr ]) ])
         | Fable.AST.Fable.Type.DeclaredType(entityRef, _) when isInterfaceType com entityRef ->
+            let fieldName = sanitizeErlangName info.Name
+            let fieldAtom = Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom fieldName))
             // Interface dispatch: works for both object expressions (maps) and class instances (refs).
             // Class interface property getters are stored as 0-arity thunks — iface_get calls them.
             // ObjectExpr property getters are stored as plain values — iface_get returns them as-is.
             Beam.ErlExpr.Call(Some "fable_utils", "iface_get", [ fieldAtom; erlExpr ])
         | _ ->
-            // Record/union: direct map access
+            // Record/union/anonymous record: direct map access, use sanitizeFieldName for disambiguation
+            let fieldName = sanitizeFieldName info.Name
+            let fieldAtom = Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom fieldName))
             Beam.ErlExpr.Call(Some "maps", "get", [ fieldAtom; erlExpr ])
     | ExprGet indexExpr ->
         let erlIndex = transformExpr com ctx indexExpr
@@ -1624,7 +1643,14 @@ and transformCall (com: IBeamCompiler) (ctx: Context) (callee: Expr) (info: Call
                     ]
                 )
                 |> wrapWithHoisted (allHoisted @ tempActualH @ tempExpectedH)
-            | _ -> Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "todo_assert_equal"))
+            | _ ->
+                Beam.ErlExpr.Call(
+                    Some "erlang",
+                    "error",
+                    [
+                        Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "assert_equal_bad_args"))
+                    ]
+                )
         | "assertNotEqual"
         | "Testing_notEqual" ->
             match info.Args with
@@ -1679,7 +1705,14 @@ and transformCall (com: IBeamCompiler) (ctx: Context) (callee: Expr) (info: Call
                     ]
                 )
                 |> wrapWithHoisted (allHoisted @ tempActualH @ tempExpectedH)
-            | _ -> Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "todo_assert_not_equal"))
+            | _ ->
+                Beam.ErlExpr.Call(
+                    Some "erlang",
+                    "error",
+                    [
+                        Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "assert_not_equal_bad_args"))
+                    ]
+                )
         | "concat" when importModuleName = Some "string" ->
             // String.Concat from JS Replacements → use binary concatenation
             let args = info.Args |> List.map (transformExpr com ctx)
@@ -1704,7 +1737,14 @@ and transformCall (com: IBeamCompiler) (ctx: Context) (callee: Expr) (info: Call
                     Beam.ErlExpr.BinOp("=:=", cleanArg, Beam.ErlExpr.Literal(Beam.ErlLiteral.StringLit ""))
                 )
                 |> wrapWithHoisted hoisted
-            | _ -> Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "todo_is_null_or_empty"))
+            | _ ->
+                Beam.ErlExpr.Call(
+                    Some "erlang",
+                    "error",
+                    [
+                        Beam.ErlExpr.Literal(Beam.ErlLiteral.AtomLit(Beam.Atom "is_null_or_empty_bad_args"))
+                    ]
+                )
         | selector when importModuleName = Some "list" ->
             // Map F# List operations to Erlang stdlib
             let args = info.Args |> List.map (transformExpr com ctx)
@@ -1958,7 +1998,7 @@ and transformCall (com: IBeamCompiler) (ctx: Context) (callee: Expr) (info: Call
 
                 if isRecordLike then
                     // Function-valued record field: (maps:get(field, Record))(Args)
-                    let fieldAtom = atomLit (sanitizeErlangName methodName)
+                    let fieldAtom = atomLit (sanitizeFieldName methodName)
                     let lookup = Beam.ErlExpr.Call(Some "maps", "get", [ fieldAtom; cleanCallee ])
                     Beam.ErlExpr.Apply(lookup, cleanArgs) |> wrapWithHoisted allHoisted
                 else
