@@ -58,6 +58,7 @@ let private isClassType (com: IBeamCompiler) (entityRef: EntityRef) =
             && not entity.IsFSharpModule
             && not entity.IsInterface
             && not entity.IsFSharpExceptionDeclaration
+            && not entity.IsValueType
         | None -> false
     | _ -> false
 
@@ -332,9 +333,24 @@ let rec transformExpr (com: IBeamCompiler) (ctx: Context) (expr: Expr) : Beam.Er
             ]
 
     | Delegate(args, body, _name, _tags) ->
+        // Deduplicate Erlang variable names in arg patterns.
+        // After uncurrying, inner lambda params that shadow outer ones appear at
+        // the same level. In Erlang, fun(X, X) -> requires both args to be equal,
+        // so we replace earlier duplicates with _ (anonymous/unused pattern).
+        let argNames =
+            args |> List.map (fun a -> capitalizeFirst a.Name |> sanitizeErlangVar)
+
         let argPats =
-            args
-            |> List.map (fun a -> Beam.PVar(capitalizeFirst a.Name |> sanitizeErlangVar))
+            let lastIndex = System.Collections.Generic.Dictionary<string, int>()
+            argNames |> List.iteri (fun i name -> lastIndex.[name] <- i)
+
+            argNames
+            |> List.mapi (fun i name ->
+                if lastIndex.[name] = i then
+                    Beam.PVar(name)
+                else
+                    Beam.PVar("_")
+            )
 
         let ctx' =
             { ctx with LocalVars = args |> List.fold (fun s a -> s.Add(a.Name)) ctx.LocalVars }
@@ -2228,6 +2244,41 @@ and transformClassDeclaration
                 // F# exception construction goes through NewRecord, not ClassDecl constructor.
                 // No need to generate a constructor function here.
                 []
+            elif ent.IsValueType then
+                // Struct/value type: return a plain map (not a ref) using sanitizeFieldName keys
+                // to match the record-style FieldGet path.
+                let ctorCtx =
+                    { ctx with
+                        LocalVars = ctorArgs |> List.fold (fun (s: Set<string>) a -> s.Add(a.Name)) ctx.LocalVars
+                    }
+
+                let mapEntries =
+                    fields
+                    |> List.map (fun (name, value) ->
+                        let erlValue = transformExpr com ctorCtx value
+                        atomLit (sanitizeFieldName name), erlValue
+                    )
+
+                let body = [ Beam.ErlExpr.Map mapEntries ]
+
+                let ctorFuncName = sanitizeErlangName cons.Name
+                com.RegisterConstructorName ent.FullName ctorFuncName
+
+                let funcDef: Beam.ErlFunctionDef =
+                    {
+                        Name = Beam.Atom ctorFuncName
+                        Arity = argPatterns.Length
+                        Clauses =
+                            [
+                                {
+                                    Patterns = argPatterns
+                                    Guard = []
+                                    Body = body
+                                }
+                            ]
+                    }
+
+                [ Beam.ErlForm.Function funcDef ]
             else
                 // Regular class: object = make_ref(), state in process dict
                 let ctorCtx =

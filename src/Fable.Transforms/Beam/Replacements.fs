@@ -250,7 +250,7 @@ let private operators
             | Decimal -> Helper.LibCall(com, "fable_decimal", "to_string", _t, [ arg ], ?loc = r) |> Some
             | Float16
             | Float32
-            | Float64 -> emitExpr r _t [ arg ] "float_to_binary($0)" |> Some
+            | Float64 -> Helper.LibCall(com, "fable_convert", "to_string", _t, [ arg ], ?loc = r) |> Some
             | _ -> emitExpr r _t [ arg ] "integer_to_binary($0)" |> Some
         | Type.Boolean -> emitExpr r _t [ arg ] "atom_to_binary($0)" |> Some
         | _ -> Helper.LibCall(com, "fable_convert", "to_string", _t, [ arg ], ?loc = r) |> Some
@@ -323,19 +323,8 @@ let private operators
     | "op_PipeLeft2", [ f; x; y ] -> CurriedApply(f, [ x; y ], _t, r) |> Some
     | "op_PipeRight3", [ x; y; z; f ]
     | "op_PipeLeft3", [ f; x; y; z ] -> CurriedApply(f, [ x; y; z ], _t, r) |> Some
-    | "op_ComposeRight", [ f1; f2 ] ->
-        // fun x -> f2(f1(x))
-        let ident = makeTypedIdent _t "x"
-        let identExpr = IdentExpr ident
-        let innerCall = CurriedApply(f1, [ identExpr ], _t, None)
-        let outerCall = CurriedApply(f2, [ innerCall ], _t, None)
-        Lambda(ident, outerCall, None) |> Some
-    | "op_ComposeLeft", [ f2; f1 ] ->
-        let ident = makeTypedIdent _t "x"
-        let identExpr = IdentExpr ident
-        let innerCall = CurriedApply(f1, [ identExpr ], _t, None)
-        let outerCall = CurriedApply(f2, [ innerCall ], _t, None)
-        Lambda(ident, outerCall, None) |> Some
+    | "op_ComposeRight", [ f1; f2 ] -> compose com ctx r _t f1 f2 |> Some
+    | "op_ComposeLeft", [ f2; f1 ] -> compose com ctx r _t f1 f2 |> Some
     // Not (boolean negation)
     | "Not", [ operand ] -> makeUnOp r _t operand UnaryNot |> Some
     // Tuples
@@ -468,7 +457,7 @@ let private languagePrimitives
         let cmp = compare com r left right
         makeBinOp r Boolean cmp (makeIntConst 0) BinaryGreaterOrEqual |> Some
     | ("PhysicalEquality" | "PhysicalEqualityIntrinsic"), [ left; right ] ->
-        makeBinOp r Boolean left right BinaryEqual |> Some
+        emitExpr r Boolean [ left; right ] "$0 =:= $1" |> Some
     | ("GenericHash" | "GenericHashIntrinsic"), [ arg ] ->
         Helper.LibCall(com, "fable_comparison", "hash", t, [ arg ], ?loc = r) |> Some
     | ("PhysicalHash" | "PhysicalHashIntrinsic"), [ arg ] ->
@@ -590,7 +579,9 @@ let private objects
                 |> Some
             | Float16
             | Float32
-            | Float64 -> emitExpr r t [ thisObj ] "float_to_binary($0)" |> Some
+            | Float64 ->
+                Helper.LibCall(com, "fable_convert", "to_string", t, [ thisObj ], ?loc = r)
+                |> Some
             | _ -> emitExpr r t [ thisObj ] "integer_to_binary($0)" |> Some
         | Type.Boolean -> emitExpr r t [ thisObj ] "atom_to_binary($0)" |> Some
         | Type.String -> Some thisObj
@@ -1209,7 +1200,7 @@ let private conversions
             | Decimal -> Helper.LibCall(com, "fable_decimal", "to_string", t, [ arg ], ?loc = r) |> Some
             | Float16
             | Float32
-            | Float64 -> emitExpr r t [ arg ] "float_to_binary($0)" |> Some
+            | Float64 -> Helper.LibCall(com, "fable_convert", "to_string", t, [ arg ], ?loc = r) |> Some
             | _ -> emitExpr r t [ arg ] "integer_to_binary($0)" |> Some
         | Type.Boolean -> emitExpr r t [ arg ] "atom_to_binary($0)" |> Some
         | _ -> Helper.LibCall(com, "fable_convert", "to_string", t, [ arg ], ?loc = r) |> Some
@@ -1249,7 +1240,7 @@ let private numericTypes
             | Decimal -> Helper.LibCall(com, "fable_decimal", "to_string", t, [ c ], ?loc = r) |> Some
             | Float16
             | Float32
-            | Float64 -> emitExpr r t [ c ] "float_to_binary($0)" |> Some
+            | Float64 -> Helper.LibCall(com, "fable_convert", "to_string", t, [ c ], ?loc = r) |> Some
             | _ -> emitExpr r t [ c ] "integer_to_binary($0)" |> Some
         | _ -> None
     | "ToString", Some c, [ fmt ] ->
