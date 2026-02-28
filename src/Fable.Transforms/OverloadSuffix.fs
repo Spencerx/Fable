@@ -130,7 +130,7 @@ let rec private getTypeFastFullName (genParams: IDictionary<_, _>) (t: Fable.Typ
             let genArgs = String.concat "," genArgs
 
             let genArgs =
-                if genArgs = "" then
+                if System.String.IsNullOrEmpty(genArgs) then
                     ""
                 else
                     "[" + genArgs + "]"

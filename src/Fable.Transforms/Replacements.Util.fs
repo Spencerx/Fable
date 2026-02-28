@@ -394,7 +394,7 @@ let splitFullName (fullname: string) =
         | -1 -> fullname
         | i -> fullname[.. i - 1]
 
-    match fullname.LastIndexOf(".") with
+    match fullname.LastIndexOf(".", StringComparison.Ordinal) with
     | -1 -> "", fullname
     | i -> fullname.Substring(0, i), fullname.Substring(i + 1)
 
@@ -404,7 +404,7 @@ let getTypeNameFromFullName (fullname: string) =
         | -1 -> fullname
         | i -> fullname[.. i - 1]
 
-    match fullname.LastIndexOf(".") with
+    match fullname.LastIndexOf(".", StringComparison.Ordinal) with
     | -1 -> fullname
     | i -> fullname.Substring(i + 1)
 

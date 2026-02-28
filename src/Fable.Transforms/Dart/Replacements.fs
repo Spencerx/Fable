@@ -665,7 +665,8 @@ let tryEntityIdent (com: Compiler) entFullName =
     | Types.averager
     | Types.icomparerGeneric
     | Types.iequalityComparerGeneric ->
-        let entFullName = entFullName[entFullName.LastIndexOf(".") + 1 ..]
+        let entFullName =
+            entFullName[entFullName.LastIndexOf(".", StringComparison.Ordinal) + 1 ..]
 
         let entFullName =
             match entFullName.IndexOf("`", StringComparison.Ordinal) with

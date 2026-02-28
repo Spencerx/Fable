@@ -651,7 +651,7 @@ module Helpers =
 
         let join sep s o =
             (f s)
-            + (if o = "" then
+            + (if String.IsNullOrEmpty(o) then
                    ""
                else
                    sep + o)
@@ -1123,7 +1123,7 @@ module Patterns =
                 memb.IsPropertyGetterMethod
                 && not memb.IsDispatchSlot
                 && not memb.IsOverrideOrExplicitInterfaceImplementation
-                && memb.LogicalName.StartsWith("get_Is")
+                && memb.LogicalName.StartsWith("get_Is", StringComparison.Ordinal)
             then
                 let unionCaseName = memb.LogicalName |> Naming.replacePrefix "get_Is" ""
                 ent.UnionCases |> Seq.tryFind (fun uc -> uc.Name = unionCaseName)

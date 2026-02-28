@@ -4047,7 +4047,7 @@ but thanks to the optimisation done below we get
                 "Unable to find a valid constructor for generating interface via ParamObject, please make sure the constructor has at least one parameter."
 
             []
-        | members :: [] ->
+        | [ members ] ->
             Declaration.interfaceDeclaration (
                 Identifier.identifier decl.Name,
                 members,
