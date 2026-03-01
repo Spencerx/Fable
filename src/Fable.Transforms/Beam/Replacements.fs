@@ -166,19 +166,43 @@ let private operators
     | "Asin", [ arg ] -> emitExpr r _t [ arg ] "math:asin($0)" |> Some
     | "Atan", [ arg ] -> emitExpr r _t [ arg ] "math:atan($0)" |> Some
     | "Atan2", [ y; x ] -> emitExpr r _t [ y; x ] "math:atan2($0, $1)" |> Some
-    | "Ceiling", [ arg ] -> emitExpr r _t [ arg ] "float(erlang:ceil($0))" |> Some
+    | "Ceiling", [ arg ] ->
+        match arg.Type with
+        | Type.Number(Decimal, _) ->
+            Helper.LibCall(com, "fable_decimal", "ceil_decimal", _t, [ arg ], ?loc = r)
+            |> Some
+        | _ -> emitExpr r _t [ arg ] "float(erlang:ceil($0))" |> Some
     | "Cos", [ arg ] -> emitExpr r _t [ arg ] "math:cos($0)" |> Some
     | "Exp", [ arg ] -> emitExpr r _t [ arg ] "math:exp($0)" |> Some
-    | "Floor", [ arg ] -> emitExpr r _t [ arg ] "float(erlang:floor($0))" |> Some
+    | "Floor", [ arg ] ->
+        match arg.Type with
+        | Type.Number(Decimal, _) ->
+            Helper.LibCall(com, "fable_decimal", "floor_decimal", _t, [ arg ], ?loc = r)
+            |> Some
+        | _ -> emitExpr r _t [ arg ] "float(erlang:floor($0))" |> Some
     | "Log", [ arg ] -> emitExpr r _t [ arg ] "math:log($0)" |> Some
     | "Log10", [ arg ] -> emitExpr r _t [ arg ] "math:log10($0)" |> Some
     | "Log2", [ arg ] -> emitExpr r _t [ arg ] "math:log2($0)" |> Some
     | ("Pow" | "PowInteger" | "op_Exponentiation"), [ base_; exp_ ] ->
-        emitExpr r _t [ base_; exp_ ] "math:pow($0, $1)" |> Some
-    | "Round", [ arg ] -> emitExpr r _t [ arg ] "float(erlang:round($0))" |> Some
+        match base_.Type with
+        | Type.Number(Decimal, _) ->
+            Helper.LibCall(com, "fable_decimal", "pown", _t, [ base_; exp_ ], ?loc = r)
+            |> Some
+        | _ -> emitExpr r _t [ base_; exp_ ] "math:pow($0, $1)" |> Some
+    | "Round", [ arg ] ->
+        match arg.Type with
+        | Type.Number(Decimal, _) ->
+            Helper.LibCall(com, "fable_decimal", "round_decimal", _t, [ arg ], ?loc = r)
+            |> Some
+        | _ -> emitExpr r _t [ arg ] "float(erlang:round($0))" |> Some
     | "Round", [ arg; digits ] ->
-        emitExpr r _t [ arg; digits ] "(erlang:round($0 * math:pow(10, $1)) / math:pow(10, $1))"
-        |> Some
+        match arg.Type with
+        | Type.Number(Decimal, _) ->
+            Helper.LibCall(com, "fable_decimal", "round_decimal", _t, [ arg; digits ], ?loc = r)
+            |> Some
+        | _ ->
+            emitExpr r _t [ arg; digits ] "(erlang:round($0 * math:pow(10, $1)) / math:pow(10, $1))"
+            |> Some
     | "Sign", [ arg ] ->
         emitExpr r _t [ arg ] "case $0 > 0 of true -> 1; false -> case $0 < 0 of true -> -1; false -> 0 end end"
         |> Some
@@ -188,11 +212,26 @@ let private operators
     | "Cosh", [ arg ] -> emitExpr r _t [ arg ] "math:cosh($0)" |> Some
     | "Sinh", [ arg ] -> emitExpr r _t [ arg ] "math:sinh($0)" |> Some
     | "Tanh", [ arg ] -> emitExpr r _t [ arg ] "math:tanh($0)" |> Some
-    | "Truncate", [ arg ] -> emitExpr r _t [ arg ] "float(trunc($0))" |> Some
+    | "Truncate", [ arg ] ->
+        match arg.Type with
+        | Type.Number(Decimal, _) ->
+            Helper.LibCall(com, "fable_decimal", "truncate_decimal", _t, [ arg ], ?loc = r)
+            |> Some
+        | _ -> emitExpr r _t [ arg ] "float(trunc($0))" |> Some
     | ("Max" | "Max_"), [ a; b ] -> emitExpr r _t [ a; b ] "erlang:max($0, $1)" |> Some
     | ("Min" | "Min_"), [ a; b ] -> emitExpr r _t [ a; b ] "erlang:min($0, $1)" |> Some
     | "Clamp", [ value; min_; max_ ] -> emitExpr r _t [ value; min_; max_ ] "erlang:min(erlang:max($0, $1), $2)" |> Some
     | "Log", [ x; base_ ] -> emitExpr r _t [ x; base_ ] "(math:log($0) / math:log($1))" |> Some
+    | "DivRem", [ x; y ] -> emitExpr r _t [ x; y ] "{$0 div $1, $0 rem $1}" |> Some
+    | "DivRem", [ x; y; refRem ] ->
+        Helper.LibCall(com, "fable_utils", "div_rem", _t, [ x; y; refRem ], ?loc = r)
+        |> Some
+    | "MinMagnitude", [ a; b ] ->
+        emitExpr r _t [ a; b ] "case erlang:abs($0) =< erlang:abs($1) of true -> $0; false -> $1 end"
+        |> Some
+    | "MaxMagnitude", [ a; b ] ->
+        emitExpr r _t [ a; b ] "case erlang:abs($0) >= erlang:abs($1) of true -> $0; false -> $1 end"
+        |> Some
     | (Operators.equality | "Eq"), [ left; right ] -> equals com r true left right |> Some
     | (Operators.inequality | "Neq"), [ left; right ] -> equals com r false left right |> Some
     | (Operators.lessThan | "Lt"), [ left; right ] -> makeBinOp r Boolean left right BinaryLess |> Some
@@ -1271,6 +1310,12 @@ let private numericTypes
         | _ ->
             Helper.LibCall(com, "fable_convert", "try_parse_int", t, [ str; outRef ], ?loc = r)
             |> Some
+    // Numeric type static methods that delegate to operators
+    | ("Min" | "Max" | "MinMagnitude" | "MaxMagnitude" | "Clamp" | "Log2" | "DivRem"), _, _ ->
+        operators com _ctx r t info thisArg args
+    // Decimal static methods: Ceiling, Floor, Round, Truncate
+    | ("Ceiling" | "Floor" | "Round" | "Truncate"), _, _ when info.DeclaringEntityFullName = "System.Decimal" ->
+        operators com _ctx r t info thisArg args
     // Decimal — fixed-scale integer (value × 10^28).
     // +, -, rem, abs, sign, comparisons work natively; *, / need library calls.
     | ("op_Addition" | "Add"), None, [ left; right ] -> makeBinOp r t left right BinaryPlus |> Some
@@ -3840,7 +3885,7 @@ let private guids
 /// Beam-specific System.Random replacements.
 /// Uses Erlang's rand module for random number generation.
 let private randoms
-    (_com: ICompiler)
+    (com: ICompiler)
     (_ctx: Context)
     r
     (t: Type)
@@ -3849,19 +3894,22 @@ let private randoms
     (args: Expr list)
     =
     match info.CompiledName, thisArg with
-    | ".ctor", _ -> emitExpr r t [] "ok" |> Some // Random is stateless in Erlang
+    | ".ctor", _ ->
+        match args with
+        | [ seed ] -> Helper.LibCall(com, "fable_random", "new_seeded", t, [ seed ], ?loc = r) |> Some
+        | _ -> Helper.LibCall(com, "fable_random", "new", t, [], ?loc = r) |> Some
     | "Next", Some _ ->
         match args with
-        | [] -> emitExpr r t [] "rand:uniform(2147483647) - 1" |> Some
-        | [ maxVal ] -> emitExpr r t [ maxVal ] "rand:uniform($0) - 1" |> Some
-        | [ minVal; maxVal ] -> emitExpr r t [ minVal; maxVal ] "$0 + rand:uniform($1 - $0) - 1" |> Some
+        | [] -> Helper.LibCall(com, "fable_random", "next", t, [], ?loc = r) |> Some
+        | [ maxVal ] -> Helper.LibCall(com, "fable_random", "next", t, [ maxVal ], ?loc = r) |> Some
+        | [ minVal; maxVal ] ->
+            Helper.LibCall(com, "fable_random", "next", t, [ minVal; maxVal ], ?loc = r)
+            |> Some
         | _ -> None
-    | "NextDouble", Some _ -> emitExpr r t [] "rand:uniform()" |> Some
+    | "NextDouble", Some _ -> Helper.LibCall(com, "fable_random", "next_double", t, [], ?loc = r) |> Some
     | "NextBytes", Some _ ->
         match args with
-        | [ arr ] ->
-            emitExpr r t [ arr ] "binary_to_list(crypto:strong_rand_bytes(length(get($0))))"
-            |> Some
+        | [ arr ] -> Helper.LibCall(com, "fable_random", "next_bytes", t, [ arr ], ?loc = r) |> Some
         | _ -> None
     | _ -> None
 
@@ -4670,6 +4718,27 @@ let tryCall
             Some arg // identity in Erlang
         | "Parse", None, [ str ] -> emitExpr r t [ str ] "binary_to_integer($0)" |> Some
         | "Pow", None, [ base_; exp_ ] -> emitExpr r t [ base_; exp_ ] "math:pow($0, $1)" |> Some
+        | "Log", None, [ arg ] -> emitExpr r t [ arg ] "math:log(float($0))" |> Some
+        | "Log", None, [ arg; base_ ] -> emitExpr r t [ arg; base_ ] "(math:log(float($0)) / math:log($1))" |> Some
+        | "Log10", None, [ arg ] -> emitExpr r t [ arg ] "math:log10(float($0))" |> Some
+        | "Log2", None, [ arg ] -> emitExpr r t [ arg ] "math:log2(float($0))" |> Some
+        | "DivRem", None, [ x; y ] -> emitExpr r t [ x; y ] "{$0 div $1, $0 rem $1}" |> Some
+        | "DivRem", None, [ x; y; refRem ] ->
+            Helper.LibCall(com, "fable_utils", "div_rem", t, [ x; y; refRem ], ?loc = r)
+            |> Some
+        | "DivRem", None, _ ->
+            // Fallback: use the operators DivRem handler
+            operators com ctx r t info thisArg args
+        | ("Min" | "Min_"), None, [ a; b ] -> emitExpr r t [ a; b ] "erlang:min($0, $1)" |> Some
+        | ("Max" | "Max_"), None, [ a; b ] -> emitExpr r t [ a; b ] "erlang:max($0, $1)" |> Some
+        | "MinMagnitude", None, [ a; b ] ->
+            emitExpr r t [ a; b ] "case erlang:abs($0) =< erlang:abs($1) of true -> $0; false -> $1 end"
+            |> Some
+        | "MaxMagnitude", None, [ a; b ] ->
+            emitExpr r t [ a; b ] "case erlang:abs($0) >= erlang:abs($1) of true -> $0; false -> $1 end"
+            |> Some
+        | "Clamp", None, [ value; min_; max_ ] ->
+            emitExpr r t [ value; min_; max_ ] "erlang:min(erlang:max($0, $1), $2)" |> Some
         | "get_Zero", _, _ -> Value(NumberConstant(NumberValue.Int32 0, NumberInfo.Empty), r) |> Some
         | "get_One", _, _ -> Value(NumberConstant(NumberValue.Int32 1, NumberInfo.Empty), r) |> Some
         | "CompareTo", Some thisObj, [ arg ] -> compare com r thisObj arg |> Some
