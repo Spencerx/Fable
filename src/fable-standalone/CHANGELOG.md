@@ -1,5 +1,5 @@
 ---
-last_commit_released: 63bcd3d90f37cb3934edcc59b5f54f49ffab3896
+last_commit_released: 09003de8bc72e4f73281828d905d49aab7db3f55
 include:
   - ../Fable.Transforms/
   - ../fcs-fable/
@@ -12,6 +12,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## 2.0.2 - 2026-05-31
+
+### 🐞 Bug Fixes
+
+* *(js/ts)* Throw an error when trying to set non-property memeber inside of `jsOptions` (#4624) ([2d9673f](https://github.com/Spencerx/Fable/commit/2d9673fb609f6ae3273576c913929e0f601d8f5d))
+
+<strong><small>[View changes on Github](https://github.com/Spencerx/Fable/compare/63bcd3d90f37cb3934edcc59b5f54f49ffab3896..09003de8bc72e4f73281828d905d49aab7db3f55)</small></strong>
 
 ## 2.0.1 - 2026-05-28
 

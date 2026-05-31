@@ -1,5 +1,5 @@
 ---
-last_commit_released: 63bcd3d90f37cb3934edcc59b5f54f49ffab3896
+last_commit_released: 09003de8bc72e4f73281828d905d49aab7db3f55
 updaters:
   - package.json:
       file: package.json
@@ -14,6 +14,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## 2.1.1 - 2026-05-31
+
+### 🐞 Bug Fixes
+
+* *(js/ts)* Reject JS-permissive date strings that .NET TryParse rejects (#4588) ([09003de](https://github.com/Spencerx/Fable/commit/09003de8bc72e4f73281828d905d49aab7db3f55))
+
+<strong><small>[View changes on Github](https://github.com/Spencerx/Fable/compare/63bcd3d90f37cb3934edcc59b5f54f49ffab3896..09003de8bc72e4f73281828d905d49aab7db3f55)</small></strong>
 
 ## 2.1.0 - 2026-05-28
 
